@@ -1,0 +1,9 @@
+fastapi==0.110.1
+uvicorn==0.29.0
+python-multipart==0.0.9
+openai==1.16.2
+pymupdf==1.24.1
+pillow==10.3.0
+alibabacloud_ocr_api20210707==1.2.0
+alibabacloud_ocr_api20210707==1.2.0
+alibabacloud_tea_openapi==0.3.8
