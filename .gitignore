@@ -1,5 +1,6 @@
 # 编译输出
 /frontend/dist/
+/backend/dist/
 /backend/build/
 /frontend/out/
 *.exe

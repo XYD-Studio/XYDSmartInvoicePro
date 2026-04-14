@@ -32,19 +32,27 @@ export const exportDataToExcel = async (dataList: Array<Record<string, any>>, fi
     }
   })
 
-  // >>> 核心修复：在这里洗数据，把文本转为真实的数字型 <<<
   dataList.forEach((data) => {
     const rowData: any = {}
     Object.keys(data).forEach(key => {
       let val = data[key]
-      // 只要表头带有'金额'、'税额'、'合计'，就尝试转数字
-      if (['总金额', '税额', '价税合计'].includes(key) || key.includes('金额') || key.includes('税')) {
+      
+      // >>> 核心修复：极度严格的白名单。只有明确是“钱”的字段才转数字 <<<
+      // 坚决避开“发票号码”、“纳税人识别号”、“电话号码”等字段
+      const isMoneyField = ['总金额', '税额', '价税合计'].includes(key) || (key.includes('金额') && !key.includes('号码'))
+      
+      if (isMoneyField) {
         if (typeof val === 'string') {
-          // 用正则过滤掉货币符号、逗号等，只留数字和负号和小数点
           const cleanStr = val.replace(/[^\d.-]/g, '')
           if (cleanStr && !isNaN(Number(cleanStr))) {
-            val = Number(cleanStr) // 强制转数值型
+            val = Number(cleanStr) // 转换为真实的纯数字，支持后续 Excel 求和
           }
+        }
+      } else {
+        // 其他所有字段（包含纳税人识别号、发票号码），全部强制转为字符串！
+        // 这样即使数字再长，Excel 也不会将其转为科学计数法
+        if (val !== null && val !== undefined) {
+          val = String(val)
         }
       }
       rowData[key] = val
@@ -59,9 +67,12 @@ export const exportDataToExcel = async (dataList: Array<Record<string, any>>, fi
         bottom: { style: 'thin', color: { argb: 'FFEEEEEE' } },
         right: { style: 'thin', color: { argb: 'FFEEEEEE' } }
       }
-      // 如果单元格变成了数字型，自动加千位分隔符样式（方便查看）
+      // 如果单元格变成了真实的数字（钱），加上千位分隔符和两位小数
       if (typeof cell.value === 'number') {
         cell.numFmt = '#,##0.00'
+      } else if (typeof cell.value === 'string') {
+        // 强制告诉 Excel 这是一个文本，不要自作多情转格式
+        cell.numFmt = '@'
       }
     })
   })
