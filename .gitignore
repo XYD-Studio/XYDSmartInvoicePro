@@ -1,6 +1,7 @@
 # 编译输出
 /frontend/dist/
 /backend/dist/
+/backend/dist_app/
 /backend/build/
 /frontend/out/
 *.exe
@@ -8,6 +9,7 @@
 *.so
 *.dylib
 *.class
+*.ss
 
 # 依赖目录
 /frontend/node_modules/
