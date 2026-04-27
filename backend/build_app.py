@@ -33,6 +33,7 @@ def build():
 
     print("\n开始执行 PyInstaller 编译 (这可能需要几分钟)...\n")
     
+    
     hidden_imports = [
         "fitz", 
         "requests",
@@ -47,8 +48,19 @@ def build():
     for mod in hidden_imports:
         hidden_import_args.extend(["--hidden-import", mod])
 
+    # >>> 核心瘦身：拉黑绝对用不到的重型库，防止它们被连带打包 <<<
+    excludes = [
+        "tkinter", "unittest", "matplotlib", "numpy", "pandas", 
+        "PyQt5", "PyQt6", "PySide2", "PySide6", "scipy", "notebook",
+        "PIL", "IPython", "pydoc"
+    ]
+    exclude_args = []
+    for mod in excludes:
+        exclude_args.extend(["--exclude-module", mod])
+
     sep = ";" if os.name == "nt" else ":"
 
+    # 把 exclude_args 加进编译参数中
     args = [
         "pyinstaller",
         "--name", "SmartInvoicePro",
@@ -58,6 +70,15 @@ def build():
         "--add-data", f"dist{sep}dist",
         "--add-data", f"app{sep}app",
     ]
+    
+    if os.path.exists(icon_file):
+        args.extend([
+            "--icon", icon_file,
+            "--add-data", f"logo.ico{sep}."
+        ])
+
+    args = args + hidden_import_args + exclude_args + ["desktop_main.py"]
+
     
     # >>> 核心修改：如果存在图标，将图标文件封装进去，并替换 EXE 主图标 <<<
     if os.path.exists(icon_file):
