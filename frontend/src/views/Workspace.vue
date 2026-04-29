@@ -43,7 +43,6 @@ const allFields = computed(() => {
 const displayCols = ref<string[]>([...(store.config.customColumnOrder || [])])
 const draggingCol = ref<string | null>(null)
 
-// 同步新增字段时，避开已经被用户删掉的隐藏列
 watch(allFields, (newFields) => {
   let changed = false
   newFields.forEach(f => {
@@ -58,7 +57,6 @@ watch(allFields, (newFields) => {
   }
 }, { deep: true, immediate: true })
 
-// 拖拽列功能
 const onDragStartCol = (col: string) => { draggingCol.value = col }
 const onDropCol = (targetCol: string) => {
   if (!draggingCol.value || draggingCol.value === targetCol) return
@@ -70,16 +68,14 @@ const onDropCol = (targetCol: string) => {
   store.saveConfig({ customColumnOrder: displayCols.value })
 }
 
-// >>> 新增：删除某一列 <<<
 const removeCol = (colToRemove: string) => {
   displayCols.value = displayCols.value.filter(c => c !== colToRemove)
   const newHidden = [...(store.config.hiddenCols || []), colToRemove]
   store.saveConfig({ customColumnOrder: displayCols.value, hiddenCols: newHidden })
 }
 
-// >>> 新增：一键恢复被删除的列 <<<
 const restoreCols = () => {
-  store.saveConfig({ hiddenCols: [] }) // 清空黑名单
+  store.saveConfig({ hiddenCols: [] })
   allFields.value.forEach(f => {
      if (!displayCols.value.includes(f)) displayCols.value.push(f)
   })
@@ -143,7 +139,8 @@ const startProcess = async () => {
     formData.append('model', store.config.model || 'qwen-vl-plus')
 
     try {
-      const res = await axios.post('http://127.0.0.1:8000/api/v1/process-invoice', formData)
+      // >>> 端口改为 8888 <<<
+      const res = await axios.post('http://127.0.0.1:8888/api/v1/process-invoice', formData)
       item.data = { ...item.data, ...res.data.data }
       item.data['是否重复'] = store.checkDuplicate(item.data) ? '是' : '否'
       if (res.data.fallback_warning) {
@@ -176,14 +173,19 @@ const handleKeydown = (e: KeyboardEvent) => {
 onMounted(() => window.addEventListener('keydown', handleKeydown))
 onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 
-const handleExport = () => {
+const handleExport = async () => {
   const successData = fileList.value.filter(f => f.status === 'success' || f.status === 'warning').map(f => {
      const row: any = { '源文件名': f.data['源文件名'] }
      displayCols.value.forEach(col => { row[col] = f.data[col] || '-' })
      return row
   })
   if (successData.length === 0) return alert('没有成功的记录可导出')
-  exportDataToExcel(successData, `发票台账_${new Date().getTime()}.xlsx`)
+  
+  try {
+    await exportDataToExcel(successData, `发票台账_${new Date().getTime()}.xlsx`)
+  } catch (err) {
+    alert("导出失败，文件可能被占用！")
+  }
 }
 </script>
 
@@ -197,41 +199,24 @@ const handleExport = () => {
       <div class="flex space-x-4">
         <button @click="showAbout = true" class="text-sm font-medium text-gray-500 hover:text-blue-600">ℹ️ 关于与帮助</button>
         <button @click="showSettings = true" class="text-sm font-medium text-gray-500 hover:text-blue-600">⚙️ 引擎设置</button>
-        <button @click="startProcess" class="px-5 py-1.5 bg-blue-600 text-white text-sm font-bold rounded-md hover:bg-blue-700 shadow-sm transition-colors">
-          ▶️ 开始识别全部
-        </button>
       </div>
     </div>
 
     <splitpanes horizontal class="flex-1 default-theme">
       <pane size="65">
         <splitpanes>
-          
           <pane size="20" min-size="15" class="bg-white flex flex-col relative z-10 border-r border-gray-200">
-            <label 
-              class="m-3 p-4 border-2 border-dashed border-gray-300 rounded-lg text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
-              :class="{'border-blue-500 bg-blue-50': isDragging}"
-              @dragover.prevent="isDragging = true" @dragleave.prevent="isDragging = false" @drop.prevent="handleDrop"
-            >
+            <label class="m-3 p-4 border-2 border-dashed border-gray-300 rounded-lg text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors" :class="{'border-blue-500 bg-blue-50': isDragging}" @dragover.prevent="isDragging = true" @dragleave.prevent="isDragging = false" @drop.prevent="handleDrop">
               <div class="text-2xl mb-1">📂</div>
               <div class="text-xs text-gray-500 font-medium">拖拽上传票据</div>
               <input type="file" class="hidden" multiple accept=".pdf,.jpg,.png" @change="e => addFiles((e.target as HTMLInputElement).files!)" />
             </label>
-            
             <div class="px-3 pb-2 flex justify-between items-center border-b border-gray-100">
                <span class="text-xs font-semibold text-gray-400">已导入 {{ fileList.length }} 份</span>
-               <button @click="clearAllFiles" class="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors" title="清空全部列表">
-                 🗑️ 一键清空
-               </button>
+               <button @click="clearAllFiles" class="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors" title="清空全部列表">🗑️ 一键清空</button>
             </div>
-            
             <div class="flex-1 overflow-y-auto px-3 pb-3 pt-2 space-y-1.5">
-              <div 
-                v-for="(item, idx) in fileList" :key="item.id"
-                @click="activeId = item.id"
-                class="p-2.5 rounded-md text-sm cursor-pointer border transition-all flex items-center justify-between"
-                :class="activeId === item.id ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-transparent hover:bg-gray-100'"
-              >
+              <div v-for="(item, idx) in fileList" :key="item.id" @click="activeId = item.id" class="p-2.5 rounded-md text-sm cursor-pointer border transition-all flex items-center justify-between" :class="activeId === item.id ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-transparent hover:bg-gray-100'">
                 <div class="truncate flex-1 pr-2">
                   <span class="text-gray-400 mr-1">{{ idx + 1 }}.</span>
                   <span class="font-medium text-gray-700" :title="item.file.name">{{ item.file.name }}</span>
@@ -254,9 +239,7 @@ const handleExport = () => {
               </template>
               <div v-else class="text-gray-400 text-sm">请选择左侧文件</div>
             </div>
-            <div class="text-center mt-2 text-xs text-gray-500 font-medium">
-              💡 提示：使用 <kbd class="bg-gray-300 text-white px-1 rounded">Alt</kbd> + <kbd class="bg-gray-300 text-white px-1 rounded">↑</kbd> <kbd class="bg-gray-300 text-white px-1 rounded">↓</kbd> 跨文件切换
-            </div>
+            <div class="text-center mt-2 text-xs text-gray-500 font-medium">💡 提示：使用 <kbd class="bg-gray-300 text-white px-1 rounded">Alt</kbd> + <kbd class="bg-gray-300 text-white px-1 rounded">↑</kbd> <kbd class="bg-gray-300 text-white px-1 rounded">↓</kbd> 跨文件切换</div>
           </pane>
 
           <pane size="25" min-size="20" class="bg-white flex flex-col relative z-10 border-l border-gray-200">
@@ -264,29 +247,18 @@ const handleExport = () => {
               <h2 class="text-sm font-bold text-yellow-800 flex items-center"><span class="mr-1">✍️</span> 提取结果核对</h2>
               <p class="text-[10px] text-yellow-600 mt-1">提取有误请直接修改，系统自动保存。</p>
             </div>
-            
             <div class="flex-1 overflow-y-auto p-4 space-y-4" v-if="activeFile && (activeFile.status === 'success' || activeFile.status === 'warning')">
-              <div v-if="activeFile.status === 'warning'" class="bg-yellow-100 text-yellow-800 text-xs p-2 rounded border border-yellow-200">
-                ⚠️ {{ activeFile.errorMsg }}
-              </div>
+              <div v-if="activeFile.status === 'warning'" class="bg-yellow-100 text-yellow-800 text-xs p-2 rounded border border-yellow-200">⚠️ {{ activeFile.errorMsg }}</div>
               <div v-for="field in allFields" :key="field">
                 <label class="block text-xs font-semibold text-gray-600 mb-1">{{ field }}</label>
-                <textarea 
-                  v-if="['购买项目名称', '销方名称', '购方名称'].includes(field)"
-                  v-model="activeFile.data[field]" rows="2"
-                  class="w-full border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 shadow-sm p-2 bg-blue-50/30"
-                ></textarea>
-                <input 
-                  v-else type="text" v-model="activeFile.data[field]" 
-                  class="w-full border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 shadow-sm p-2 bg-blue-50/30" 
-                />
+                <textarea v-if="['购买项目名称', '销方名称', '购方名称'].includes(field)" v-model="activeFile.data[field]" rows="2" class="w-full border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 shadow-sm p-2 bg-blue-50/30"></textarea>
+                <input v-else type="text" v-model="activeFile.data[field]" class="w-full border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 shadow-sm p-2 bg-blue-50/30" />
               </div>
             </div>
             <div v-else-if="activeFile && activeFile.status === 'processing'" class="flex-1 flex items-center justify-center text-blue-500 text-sm">AI 正在火速识别中...</div>
             <div v-else-if="activeFile && activeFile.status === 'error'" class="flex-1 p-4 text-red-500 text-sm break-words">{{ activeFile.errorMsg }}</div>
             <div v-else class="flex-1 flex items-center justify-center text-gray-400 text-sm">暂无识别数据</div>
           </pane>
-
         </splitpanes>
       </pane>
 
@@ -294,14 +266,18 @@ const handleExport = () => {
         <div class="flex justify-between items-center p-3 border-b bg-gray-50 shrink-0">
           <div class="flex items-center space-x-4">
              <h3 class="text-sm font-bold text-gray-700">📊 最终台账总览 (支持拖拽表头排序)</h3>
-             <!-- >>> 新增恢复列按钮 <<< -->
              <button v-if="(store.config.hiddenCols || []).length > 0" @click="restoreCols" class="text-xs text-blue-500 hover:text-blue-700 underline transition-colors">
                ↺ 恢复隐藏的列 ({{ store.config.hiddenCols?.length }})
              </button>
           </div>
-          <button @click="handleExport" class="px-6 py-1.5 bg-emerald-500 text-white text-sm font-bold rounded-md hover:bg-emerald-600 shadow-sm transition-colors">
-            📥 确认无误，导出 Excel
-          </button>
+          <div class="flex space-x-3">
+            <button @click="startProcess" class="px-5 py-1.5 bg-blue-600 text-white text-sm font-bold rounded-md hover:bg-blue-700 shadow-sm transition-colors">
+              ▶️ 开始识别全部
+            </button>
+            <button @click="handleExport" class="px-5 py-1.5 bg-emerald-500 text-white text-sm font-bold rounded-md hover:bg-emerald-600 shadow-sm transition-colors">
+              📥 导出 Excel
+            </button>
+          </div>
         </div>
         <div class="flex-1 overflow-auto p-2">
           <table class="w-full text-left text-xs border-collapse">
@@ -309,16 +285,9 @@ const handleExport = () => {
               <tr>
                 <th class="p-2 border font-semibold text-gray-600 w-10 text-center">#</th>
                 <th class="p-2 border font-semibold text-gray-600 min-w-[100px]">文件名</th>
-                
-                <th 
-                  v-for="col in displayCols" :key="col" draggable="true"
-                  @dragstart="onDragStartCol(col)" @dragover.prevent @drop="onDropCol(col)"
-                  class="p-2 border font-semibold text-gray-600 whitespace-nowrap cursor-move hover:bg-gray-200 transition-colors group relative"
-                  :class="{'opacity-50': draggingCol === col}" title="按住拖拽调整，点击右侧 X 隐藏"
-                >
+                <th v-for="col in displayCols" :key="col" draggable="true" @dragstart="onDragStartCol(col)" @dragover.prevent @drop="onDropCol(col)" class="p-2 border font-semibold text-gray-600 whitespace-nowrap cursor-move hover:bg-gray-200 transition-colors group relative" :class="{'opacity-50': draggingCol === col}" title="按住拖拽调整，点击右侧 X 隐藏">
                   <div class="flex items-center justify-between">
                     <span>{{ col }} <span class="text-[10px] text-gray-400 ml-1">↕️</span></span>
-                    <!-- >>> 新增隐藏列按钮 (X) <<< -->
                     <button @click.stop="removeCol(col)" class="text-red-400 hover:text-red-600 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">×</button>
                   </div>
                 </th>
@@ -339,7 +308,6 @@ const handleExport = () => {
           </table>
         </div>
       </pane>
-
     </splitpanes>
 
     <ApiSetupModal v-if="showSettings" @close="showSettings = false" />
