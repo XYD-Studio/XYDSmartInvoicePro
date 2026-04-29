@@ -1,8 +1,10 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from pydantic import BaseModel
 import shutil
 import os
 import uuid
 import requests
+import base64
 from app.services.ai_extractor import InvoiceAIExtractor
 from app.utils.file_parser import convert_to_image
 from app.services.aliyun_ocr import AliyunOcrService
@@ -29,34 +31,25 @@ async def process_invoice(
         shutil.copyfileobj(file.file, buffer)
 
     target_path = temp_filepath
-    fallback_warning = "" # 用于记录降级警告
+    fallback_warning = ""
 
     try:
-        # 分支 1：增值税专用 OCR 引擎
         if provider == 'aliyun-ocr':
             if not aliyun_ak or not aliyun_sk:
                 raise HTTPException(status_code=400, detail="请配置完整的阿里云 AccessKey")
-            
             try:
-                # 尝试使用 OCR
                 ocr_service = AliyunOcrService(aliyun_ak, aliyun_sk)
                 result = ocr_service.recognize(target_path)
             except Exception as ocr_err:
-                # 【核心商业逻辑：自动降级机制】
-                # 如果 OCR 失败，但用户同时配置了大模型 (ai_key)，则自动无缝降级到大模型去识别
                 if ai_key:
                     print(f"OCR识别失败 [{str(ocr_err)}]，正在自动降级调用大模型兜底...")
                     fallback_warning = f"OCR接口不可用({str(ocr_err).split(':')[0]})，已自动降级为大模型识别。"
-                    
                     if ext == 'pdf':
                         target_path = convert_to_image(temp_filepath, TEMP_DIR)
                     ai_service = InvoiceAIExtractor(api_key=ai_key, base_url=base_url)
                     result = ai_service.extract_info(target_path, model_name=model)
                 else:
-                    # 如果用户连备用的大模型也没配，那就只能报错了
                     raise Exception(f"OCR解析失败且无大模型备用方案: {str(ocr_err)}")
-            
-        # 分支 2：直接选用视觉大模型引擎
         else:
             if not ai_key:
                 raise HTTPException(status_code=400, detail="请配置大模型 API Key")
@@ -65,7 +58,6 @@ async def process_invoice(
             ai_service = InvoiceAIExtractor(api_key=ai_key, base_url=base_url)
             result = ai_service.extract_info(target_path, model_name=model)
             
-        # 将可能的降级警告一并返回给前端
         return {"status": "success", "data": result, "fallback_warning": fallback_warning}
         
     except Exception as e:
@@ -79,6 +71,7 @@ async def process_invoice(
         if target_path and target_path != temp_filepath and os.path.exists(target_path):
             try: os.remove(target_path)
             except: pass
+
 
 @router.post("/test-api")
 async def test_api(
@@ -98,9 +91,7 @@ async def test_api(
             
             config = open_api_models.Config(access_key_id=aliyun_ak, access_key_secret=aliyun_sk, endpoint='ocr-api.cn-hangzhou.aliyuncs.com')
             client = OcrApiClient(config)
-            
             try:
-                # 兼容不同版本 SDK 的类名
                 req = ocr_api_models.RecognizeVatInvoiceRequest() if hasattr(ocr_api_models, 'RecognizeVatInvoiceRequest') else ocr_api_models.RecognizeAdvancedRequest()
                 client.recognize_vat_invoice_with_options(req, util_models.RuntimeOptions())
             except Exception as e:
@@ -110,7 +101,6 @@ async def test_api(
             return {"status": "success", "message": "OCR 引擎连接成功，AK/SK 合法！"}
         except Exception as e:
             return {"status": "error", "message": f"连接失败: {str(e)}"}
-            
     else:
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         payload = {"model": model, "messages": [{"role": "user", "content": "hello"}], "max_tokens": 10}
@@ -123,3 +113,39 @@ async def test_api(
                 return {"status": "error", "message": f"鉴权或模型错误: {response.text}"}
         except Exception as e:
              return {"status": "error", "message": f"网络拒绝连接: {str(e)}"}
+
+
+# >>> 新增：专为桌面端设计的“系统原生另存为”接口 <<<
+class SaveExcelRequest(BaseModel):
+    filename: str
+    b64_data: str
+
+@router.post("/save-excel")
+async def save_excel(req: SaveExcelRequest):
+    try:
+        import webview
+        # 如果没有打开任何桌面窗口 (例如在纯网页模式运行)，则拒绝
+        if not webview.windows:
+            return {"status": "error", "message": "非桌面环境，无法调用原生对话框"}
+        
+        # 获取当前的桌面主窗口
+        window = webview.windows[0]
+        
+        # 唤起 Windows 系统的原生“另存为”对话框
+        result = window.create_file_dialog(
+            webview.SAVE_DIALOG, 
+            directory='', 
+            save_filename=req.filename, 
+            file_types=('Excel 工作表 (*.xlsx)', '所有文件 (*.*)')
+        )
+        
+        if result and len(result) > 0:
+            save_path = result[0]
+            # 把前端传过来的 Base64 Excel 数据解码并写入到用户选择的路径
+            with open(save_path, "wb") as f:
+                f.write(base64.b64decode(req.b64_data))
+            return {"status": "success", "message": "保存成功！", "path": save_path}
+        else:
+            return {"status": "cancelled", "message": "用户取消保存"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
